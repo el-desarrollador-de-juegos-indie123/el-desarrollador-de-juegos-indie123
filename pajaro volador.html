@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1.0" />
+<title>Flappy Bird — Completo</title>
+<style>
+  body{margin:0;background:#6cc0d0;font-family:sans-serif;}
+  .wrap{display:grid;place-items:center;height:100vh;}
+  .game{position:relative;width:420px;max-width:95vw;aspect-ratio:3/4;border-radius:16px;overflow:hidden;box-shadow:0 12px 40px rgba(0,0,0,.25);}
+  canvas{width:100%;height:100%;display:block;}
+  .hud{position:absolute;top:8px;left:8px;background:#ffffffcc;padding:8px 12px;border-radius:12px;font-weight:700;z-index:1;display:flex;gap:10px;align-items:center}
+  .menu{position:absolute;inset:0;display:flex;justify-content:center;align-items:center;background:rgba(0,0,0,0.4);z-index:2;}
+  .card{background:#fff;padding:20px;border-radius:16px;text-align:center;width:320px;}
+  .btn{display:block;width:100%;margin:8px 0;padding:10px;border:none;border-radius:10px;font-weight:700;cursor:pointer;background:#ffcc00;}
+  select{width:100%;padding:8px;border-radius:10px;margin-top:10px;font-weight:600;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="game">
+    <canvas id="canvas" width="420" height="560"></canvas>
+
+    <div class="hud">
+      <span>Score: <span id="score">0</span></span>
+      <span>Mejor: <span id="best">0</span></span>
+      <span>Monedas: <span id="coinsCount">0</span></span>
+      <button class="btn" id="shopBtn" style="width:auto;padding:6px 10px">Tienda</button>
+    </div>
+
+    <div class="menu" id="menu">
+      <div class="card">
+        <h1>Flappy Bird</h1>
+        <p>Selecciona un fondo y juega</p>
+        <select id="backgroundSelect">
+          <option value="city">Ciudad</option>
+          <option value="sky">Cielo</option>
+          <option value="cave">Cueva</option>
+          <option value="meadow">Pradera</option>
+          <option value="forest">Bosque</option>
+          <option value="mountains">Montañas</option>
+          <option value="sea">Mar</option>
+          <option value="beach">Playa</option>
+          <option value="snow">Pradera nevada</option>
+        </select>
+        <button class="btn" id="playBtn">Jugar</button>
+        <button class="btn" id="resetBtn">Reiniciar mejor puntuación</button>
+        <button class="btn" id="openShopBtn">Tienda</button>
+      </div>
+    </div>
+
+    <div class="menu" id="shopMenu" style="display:none;">
+      <div class="card">
+        <h2>Tienda</h2>
+        <p>Monedas: <span id="coinsShop">0</span></p>
+        <button class="btn" onclick="buyItem('cap')">Gorra (1)</button>
+        <button class="btn" onclick="buyItem('shoes_nike')">Zapatos Nike negros (2)</button>
+        <button class="btn" onclick="buyItem('shoes_puma')">Zapatos Puma blancos (2)</button>
+        <button class="btn" onclick="buyItem('shoes_star')">Zapatos cuero Star (2)</button>
+        <button class="btn" onclick="buyItem('shirt_red')">Camisa roja (3)</button>
+        <button class="btn" onclick="buyItem('shirt_blue')">Camisa azul (3)</button>
+        <button class="btn" onclick="buyItem('shirt_green')">Camisa verde (3)</button>
+        <button class="btn" id="closeShopBtn">Cerrar</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const canvas=document.getElementById('canvas'),ctx=canvas.getContext('2d');
+const W=canvas.width,H=canvas.height;
+
+const menu=document.getElementById('menu'),shopMenu=document.getElementById('shopMenu');
+const scoreEl=document.getElementById('score'),bestEl=document.getElementById('best'),coinsEl=document.getElementById('coinsCount'),coinsShop=document.getElementById('coinsShop');
+const backgroundSelect=document.getElementById('backgroundSelect');
+const playBtn=document.getElementById('playBtn'),resetBtn=document.getElementById('resetBtn'),shopBtn=document.getElementById('shopBtn'),openShopBtn=document.getElementById('openShopBtn'),closeShopBtn=document.getElementById('closeShopBtn');
+
+let running=false,score=0,best=parseInt(localStorage.getItem('flappy_best')||'0',10);
+let groundY,bird,pipes,lastTime,spawnTimer,pipeGap,pipeSpeed;
+let backgroundType=localStorage.getItem('flappy_bg')||'city';
+let bgOffset=0;
+let coins=[],goldCoins=parseInt(localStorage.getItem('flappy_coins')||'0',10);
+let playerItems=JSON.parse(localStorage.getItem('flappy_items')||'[]');
+
+bestEl.textContent=best; coinsEl.textContent=goldCoins; coinsShop.textContent=goldCoins; backgroundSelect.value=backgroundType;
+
+function resetGame(){
+  groundY=H*0.82; pipeGap=130; pipeSpeed=2.4; spawnTimer=0;
+  score=0; scoreEl.textContent=score;
+  bird={x:W*0.28,y:H*0.42,vy:0,r:14,gravity:0.5,lift:-6,maxFall:8.5};
+  pipes=[]; coins=[]; bgOffset=0;
+}
+
+function flap(){ if(running) bird.vy=bird.lift; }
+
+function spawnPipe(){
+  const minTop=40,maxTop=groundY-pipeGap-40;
+  const topH=Math.floor(minTop+Math.random()*(maxTop-minTop));
+  pipes.push({x:W+20,w:56,topH,bottomY:topH+pipeGap,passed:false});
+
+  // Moneda dorada cada 5 tubos
+  if(pipes.length % 5===0){
+    coins.push({x:W+60,y:topH+pipeGap/2,type:"gold",collected:false});
+  }
+  // Moneda de lava 10 después de la dorada (cada 15 tubos en total)
+  if(pipes.length % 15===0){
+    coins.push({x:W+60,y:topH+pipeGap/2,type:"lava",collected:false});
+  }
+}
+
+function updateCoins(){
+  for(const c of coins){
+    c.x -= pipeSpeed;
+    const dx=bird.x-c.x,dy=bird.y-c.y;
+    if(!c.collected && Math.sqrt(dx*dx+dy*dy)<bird.r+8){
+      c.collected=true;
+      if(c.type==="gold"){
+        goldCoins+=1; localStorage.setItem('flappy_coins',goldCoins);
+        coinsEl.textContent=goldCoins; coinsShop.textContent=goldCoins;
+      } else if(c.type==="lava"){
+        pipeGap=Math.max(90,pipeGap-20); pipeSpeed+=0.4;
+      }
+    }
+  }
+  coins=coins.filter(c=>c.x>-20 && !c.collected);
+}
+
+function update(dt){
+  // Física
+  bird.vy+=bird.gravity; if(bird.vy>bird.maxFall) bird.vy=bird.maxFall; bird.y+=bird.vy;
+  if(bird.y<0) bird.y=0; if(bird.y+bird.r>groundY){endGame();return;}
+
+  // Tubos
+  spawnTimer+=dt; if(spawnTimer>1600){spawnPipe(); spawnTimer=0;}
+  for(const p of pipes) p.x-=pipeSpeed;
+  pipes=pipes.filter(p=>p.x+p.w>-10);
+
+  // Colisiones y puntuación
+  for(const p of pipes){
+    const inX=bird.x+bird.r>p.x&&bird.x-bird.r<p.x+p.w;
+    if(inX&&(bird.y-bird.r<p.topH||bird.y+bird.r>p.bottomY)){endGame();return;}
+    if(!p.passed&&bird.x>p.x+p.w){
+      p.passed=true;
+      score++; scoreEl.textContent=score;
+
+      // +1 moneda cada 5 puntos
+      if(score % 5 === 0){
+        goldCoins += 1;
+        localStorage.setItem('flappy_coins', goldCoins);
+        coinsEl.textContent = goldCoins; coinsShop.textContent = goldCoins;
+      }
+
+      // +1 moneda extra cada 1000 puntos
+      if(score>0 && score%1000===0){
+        goldCoins += 1;
+        localStorage.setItem('flappy_coins', goldCoins);
+        coinsEl.textContent = goldCoins; coinsShop.textContent = goldCoins;
+        score++; scoreEl.textContent=score; // evita doble premio en el mismo frame
+      }
+    }
+  }
+
+  updateCoins();
+  bgOffset+=pipeSpeed*0.3;
+}
+
+function draw(){
+  ctx.clearRect(0,0,W,H);
+  drawBackground(backgroundType);
+
+  // Tubos
+  for(const p of pipes){
+    ctx.fillStyle="#3aa655"; ctx.fillRect(p.x,0,p.w,p.topH);
+    ctx.fillStyle="#2f8e49"; ctx.fillRect(p.x,p.topH-8,p.w,8);
+    const bottomH=groundY-p.bottomY;
+    ctx.fillStyle="#3aa655"; ctx.fillRect(p.x,p.bottomY,p.w,bottomH);
+    ctx.fillStyle="#2f8e49"; ctx.fillRect(p.x,p.bottomY,p.w,8);
+  }
+
+  // Monedas
+  for(const c of coins){
+    if(c.type==="gold"){
+      const grad=ctx.createRadialGradient(c.x,c.y,2,c.x,c.y,8);
+      grad.addColorStop(0,'#fff59d'); grad.addColorStop(1,'#fbc02d');
+      ctx.fillStyle=grad; ctx.beginPath(); ctx.arc(c.x,c.y,8,0,Math.PI*2); ctx.fill(); ctx.strokeStyle='#8d6e63'; ctx.stroke();
+    }else{
+      const grad=ctx.createRadialGradient(c.x,c.y,2,c.x,c.y,8);
+      grad.addColorStop(0,'#ff7043'); grad.addColorStop(1,'#e53935');
+      ctx.fillStyle=grad; ctx.beginPath(); ctx.arc(c.x,c.y,8,0,Math.PI*2); ctx.fill(); ctx.strokeStyle='#ffa726'; ctx.stroke();
+    }
+  }
+
+  // Suelo según mapa
+  if(backgroundType==="city"){
+    ctx.fillStyle="#2c2c2c"; ctx.fillRect(0,groundY,W,H-groundY); // carretera
+    ctx.strokeStyle="#ffd54f"; ctx.lineWidth=3; ctx.setLineDash([14,10]);
+    ctx.beginPath(); ctx.moveTo(0,groundY+18); ctx.lineTo(W,groundY+18); ctx.stroke(); ctx.setLineDash([]);
+  }else if(backgroundType==="sky"){
+    ctx.fillStyle="#87ceeb"; ctx.fillRect(0,groundY,W,H-groundY); // suelo color cielo
+  }else if(backgroundType==="cave"){
+    ctx.fillStyle="#2f2f2f"; ctx.fillRect(0,groundY,W,H-groundY); // suelo oscuro
+  }else if(backgroundType==="sea"){
+    ctx.fillStyle="#1e90ff"; ctx.fillRect(0,groundY,W,H-groundY);
+  }else if(backgroundType==="beach"){
+    ctx.fillStyle="#f4e2b5"; ctx.fillRect(0,groundY,W,H-groundY);
+  }else if(backgroundType==="snow"){
+    ctx.fillStyle="#bfe4ff"; ctx.fillRect(0,groundY,W,H-groundY);
+  }else if(backgroundType==="meadow"||backgroundType==="forest"){
+    ctx.fillStyle="#7cfc00"; ctx.fillRect(0,groundY,W,H-groundY);
+  }else{
+    ctx.fillStyle="#ded895"; ctx.fillRect(0,groundY,W,H-groundY);
+  }
+
+  drawBird();
+}
+
+function loop(now){
+  if(!running) return;
+  const dt=Math.min(32,now-lastTime); lastTime=now;
+  update(dt); draw();
+  requestAnimationFrame(loop);
+}
+
+function startGame(){
+  backgroundType=backgroundSelect.value;
+  localStorage.setItem('flappy_bg',backgroundType);
+  resetGame(); running=true; menu.style.display='none'; shopMenu.style.display='none';
+  requestAnimationFrame(t=>{lastTime=t; loop(t);});
+}
+
+function endGame(){
+  running=false;
+  if(score>best){best=score; localStorage.setItem('flappy_best',best); bestEl.textContent=best;}
+  menu.style.display='flex';
+}
+
+function resetBest(){
+  localStorage.removeItem('flappy_best');
+  best=0; bestEl.textContent=best;
+}
+
+// Tienda
+function openShop(){ shopMenu.style.display='flex'; coinsShop.textContent=goldCoins; }
+function closeShop(){ shopMenu.style.display='none'; }
+function buyItem(item){
+  const prices={cap:1,shoes_nike:2,shoes_puma:2,shoes_star:2,shirt_red:3,shirt_blue:3,shirt_green:3};
+  const cost=prices[item];
+  if(goldCoins>=cost){
+    goldCoins-=cost; localStorage.setItem('flappy_coins',goldCoins);
+    coinsEl.textContent=goldCoins; coinsShop.textContent=goldCoins;
+    if(!playerItems.includes(item)) playerItems.push(item);
+    localStorage.setItem('flappy_items',JSON.stringify(playerItems));
+    alert('¡Compraste ' + item.replace('_',' ') + '!');
+  }else{
+    alert('No tienes suficientes monedas');
+  }
+}
+
+// Pájaro mejorado
+function drawBird(){
+  ctx.save();
+  ctx.translate(bird.x,bird.y);
+  const tilt=Math.max(-0.6,Math.min(0.6,bird.vy*0.08));
+  ctx.rotate(tilt);
+
+  // Cuerpo con degradado y borde
+  const grad=ctx.createRadialGradient(0,0,5,0,0,bird.r);
+  grad.addColorStop(0,'#ffeb3b'); grad.addColorStop(1,'#f57c00');
+  ctx.fillStyle=grad; ctx.beginPath(); ctx.arc(0,0,bird.r,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle='#000'; ctx.lineWidth=2; ctx.stroke();
+
+  // Ala animada
+  const flapY=Math.sin(Date.now()/150)*5;
+  ctx.fillStyle='#ffe082'; ctx.beginPath(); ctx.ellipse(-8,flapY,12,6,0,0,Math.PI*2); ctx.fill(); ctx.stroke();
+
+  // Ojo y pupila
+  ctx.fillStyle='#fff'; ctx.beginPath(); ctx.arc(6,-6,6,0,Math.PI*2); ctx.fill(); ctx.stroke();
+  ctx.fillStyle='#000'; ctx.beginPath(); ctx.arc(7,-6,3,0,Math.PI*2); ctx.fill();
+
+  // Pico
+  ctx.fillStyle='#ffeb3b';
+  ctx.beginPath(); ctx.moveTo(bird.r-2,0); ctx.lineTo(bird.r+10,-4); ctx.lineTo(bird.r-2,6); ctx.closePath(); ctx.fill(); ctx.stroke();
+
+  // Accesorios
+  if(playerItems.includes('shirt_red')){ ctx.fillStyle='red'; ctx.fillRect(-bird.r*0.8,-2,bird.r*1.6,10); }
+  if(playerItems.includes('shirt_blue')){ ctx.fillStyle='blue'; ctx.fillRect(-bird.r*0.8,-2,bird.r*1.6,10); }
+  if(playerItems.includes('shirt_green')){ ctx.fillStyle='green'; ctx.fillRect(-bird.r*0.8,-2,bird.r*1.6,10); }
+  if(playerItems.includes('cap')){
+    ctx.fillStyle='#1565c0';
+    ctx.beginPath(); ctx.moveTo(-10,-bird.r-2); ctx.lineTo(10,-bird.r-2); ctx.lineTo(8,-bird.r-8); ctx.lineTo(-8,-bird.r-8); ctx.closePath(); ctx.fill();
+  }
+  const shoeY=bird.r-2;
+  if(playerItems.includes('shoes_nike')){ ctx.fillStyle='black'; ctx.fillRect(-8,shoeY,16,4); }
+  if(playerItems.includes('shoes_puma')){ ctx.fillStyle='white'; ctx.fillRect(-8,shoeY,16,4); ctx.strokeStyle='#ccc'; ctx.strokeRect(-8,shoeY,16,4); }
+  if(playerItems.includes('shoes_star')){ ctx.fillStyle='#795548'; ctx.fillRect(-8,shoeY,16,4); }
+
+  ctx.restore();
+}
+
+// Fondos
+function drawBackground(type){
+  const baseY=groundY;
+
+  // Cielo base según tipo
+  if(type==='sky'){
+    ctx.fillStyle='#87ceeb'; ctx.fillRect(0,0,W,baseY);
+  }else if(type==='cave'){
+    ctx.fillStyle='#2f2f2f'; ctx.fillRect(0,0,W,baseY);
+  }else{
+    const skyGrad=ctx.createLinearGradient(0,0,0,baseY);
+    skyGrad.addColorStop(0,'#8ed0e0'); skyGrad.addColorStop(1,'#6cc0d0');
+    ctx.fillStyle=skyGrad; ctx.fillRect(0,0,W,baseY);
+  }
+
+  if(type==='city'){
+    // Edificios sencillos
+    const off=bgOffset%80; ctx.fillStyle='#3f5966';
+    for(let i=0;i<W+80;i+=40){
+      const x=(i-off)-60, w=30+(i%5)*6, h=60+((i/40)%7)*10;
+      const y=baseY-h;
+      ctx.fillRect(x,y,w,h);
+      ctx.fillStyle='rgba(255,235,59,0.7)';
+      for(let wy=y+6; wy<baseY-6; wy+=14){
+        for(let wx=x+6; wx<x+w-6; wx+=14){
+          if(((wx+wy)/10)%2<1) ctx.fillRect(wx,wy,3,3);
+        }
+      }
+      ctx.fillStyle='#3f5966';
+    }
+  }
+  if(type==='sky'){
+    // Nubes
+    const cloudOff=bgOffset%80; ctx.fillStyle='#ffffff';
+    for(let i=-80;i<W+80;i+=80){
+      const x=i-cloudOff, y=40+(i%3)*20;
+      ctx.beginPath();
+      ctx.arc(x, y, 14, 0, Math.PI*2);
+      ctx.arc(x+18, y+4, 16, 0, Math.PI*2);
+      ctx.arc(x+40, y, 12, 0, Math.PI*2);
+      ctx.fill();
+    }
+  }
+  if(type==='cave'){
+    // Rieles y carretillas
+    ctx.strokeStyle='#555'; ctx.lineWidth=4; ctx.beginPath(); ctx.moveTo(0,baseY-40); ctx.lineTo(W,baseY-40); ctx.stroke();
+    ctx.strokeStyle='#777'; ctx.lineWidth=2;
+    const railOff=bgOffset%30;
+    for(let i=-30;i<W+30;i+=30){ const x=i-railOff; ctx.beginPath(); ctx.moveTo(x,baseY-46); ctx.lineTo(x,baseY-34); ctx.stroke(); }
+    const cartOff=bgOffset%150; ctx.fillStyle='#a0522d';
+    for(let i=0;i<W+150;i+=150){
+      const x=i-cartOff; ctx.fillRect(x,baseY-60,40,20);
+      ctx.fillStyle='#000'; ctx.beginPath(); ctx.arc(x+10,baseY-40,6,0,Math.PI*2); ctx.arc(x+30,baseY-40,6,0,Math.PI*2); ctx.fill();
+      ctx.fillStyle='#a0522d';
+    }
+    // Rocas
+    ctx.fillStyle='#3b3b3b';
+    for(let i=0;i<W;i+=50){ ctx.beginPath(); ctx.arc(i+20,baseY-80,12,0,Math.PI*2); ctx.fill(); }
+  }
+}
+
+// Controles
+canvas.addEventListener('click',()=> running?flap():startGame(),{passive:true});
+window.addEventListener('keydown',(e)=>{ if(e.code==='Space'){ e.preventDefault(); running?flap():startGame(); }});
+playBtn.addEventListener('click',startGame);
+resetBtn.addEventListener('click',resetBest);
+shopBtn.addEventListener('click',openShop);
+openShopBtn.addEventListener('click',openShop);
+closeShopBtn.addEventListener('click',closeShop);
+
+// Inicialización
+resetGame();
+draw();
+menu.style.display='flex';
+</script>
+</body>
+</html>
